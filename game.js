@@ -18,8 +18,6 @@ if (!audio) {
 
 // ★★★ 替换为你自己的云开发环境 ID ★★★
 var CLOUD_ENV = 'cloud1-2g99echk2c92359d'
-// ★★★ 替换为你自己的激励视频广告单元 ID ★★★
-var AD_UNIT_ID = 'YOUR_AD_UNIT_ID'
 
 // ---------- 初始化 ----------
 try { if (wx.cloud) wx.cloud.init({ env: CLOUD_ENV }) } catch (e) {}
@@ -83,14 +81,15 @@ if (!nickname) {
   nickname = ''
 }
 var playCount = 0
-var adFreed = false
-var videoAd = null
+var shareCount = 0  // 累计分享次数
+var r3BaseDur = 10  // 第三局基础时长
+var r3MaxDur = 30   // 第三局最大时长
 
 // ---------- 三局配置 ----------
 var ROUNDS = [
   { name: '指尖热身', sub: '第一局', dur: 0, autoHide: 0, diff: '点击3个圆点', cdSteps: 3, cdSpeed: 600, targetTaps: 3 },
-  { name: '速点之王', sub: '第二局', dur: 7, autoHide: 900, diff: '限时7秒 · 圆点0.9秒消失', cdSteps: 2, cdSpeed: 500 },
-  { name: '紫禁之巅', sub: '终极决战', dur: 11, autoHide: 380, diff: '圆点0.38秒极速消失', cdSteps: 1, cdSpeed: 400 }
+  { name: '速点之王', sub: '第二局', dur: 10, autoHide: 900, diff: '限时10秒 · 圆点0.9秒消失', cdSteps: 1, cdSpeed: 400 },
+  { name: '紫禁之巅', sub: '终极决战', dur: 10, autoHide: 380, diff: '圆点0.38秒极速消失', cdSteps: 1, cdSpeed: 400 }
 ]
 
 var DOT_COLORS = ['#ff6b6b','#4ecdc4','#ffd700','#a29bfe','#fd79a8','#00cec9','#e17055','#6c5ce7']
@@ -112,13 +111,12 @@ var ripples = [] // {x,y,color,born}
 var particles = [] // {x,y,vx,vy,color,born,size}
 var screenShake = 0 // 屏幕震动剩余时间
 var transTimer = 0, transCount = 3, transStart = 0
-var praiseScene = false, praiseStart = 0, praiseText = []
 
 // ---------- 结算变量 ----------
-var rankTab = 2
+var rankTab = 3
 var rankList = []
 var rankLoading = false
-var needAd = false
+var needShareUI = false  // 结算页是否显示分享按钮
 
 // ========== 渲染帧 ==========
 function frame() {
@@ -126,7 +124,6 @@ function frame() {
     ctx.clearRect(0, 0, W, H)
 
     if (scene === 'home') drawHome()
-    else if (scene === 'praise') drawPraise()
     else if (scene === 'transition') drawTransition()
     else if (scene === 'play') drawPlay()
     else if (scene === 'result') drawResult()
@@ -187,202 +184,173 @@ function drawHome() {
   ctx.translate(cx, by + bh / 2)
   ctx.scale(scale, scale)
   ctx.translate(-cx, -(by + bh / 2))
-  render.drawButton(ctx, bx, by, bw, bh, '开始挑战', ['#667eea', '#764ba2'])
+  if (playCount >= 1) {
+    render.drawButton(ctx, bx, by, bw, bh, '📤 分享好友 继续挑战', ['#00b894', '#00cec9'])
+  } else {
+    render.drawButton(ctx, bx, by, bw, bh, '开始挑战', ['#667eea', '#764ba2'])
+  }
   ctx.restore()
 
   // 排行榜按钮
   var by2 = H * 0.66
   render.drawButton(ctx, bx, by2, bw, bh * 0.9, '全国排行榜', ['rgba(102,126,234,0.15)', 'rgba(102,126,234,0.15)'], '#667eea')
 
-  // 三局提示
-  var tips = ['🎯 指尖热身', '⚡ 速点之王', '🔥 紫禁之巅']
-  render.drawText(ctx, tips.join('  ', tips), cx, H * 0.82, (W * 0.032) + 'px sans-serif', 'rgba(255,255,255,0.3)')
-  render.drawText(ctx, '三局递进 · 点击越快分越高 · 每局独立排行', cx, H * 0.87, (W * 0.028) + 'px sans-serif', 'rgba(255,255,255,0.2)')
+  // 底部宣传
+  render.drawText(ctx, '🎯 热身  →  ⚡ 加速  →  🔥 紫禁之巅', cx, H * 0.80, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.3)')
+  render.drawText(ctx, '三局闯关 · 最后一关全国排名', cx, H * 0.85, (W * 0.028) + 'px sans-serif', 'rgba(255,255,255,0.2)')
 
-  // 最高分
+  // 最高分 / 已玩过提示
   var best = wx.getStorageSync('bestScore') || 0
   if (best > 0) {
-    render.drawText(ctx, '历史最高 ' + best, cx, H * 0.94, (W * 0.035) + 'px sans-serif', '#ffd700')
+    render.drawText(ctx, '🏆 紫禁之巅最高 ' + best + ' 分', cx, H * 0.91, (W * 0.032) + 'px sans-serif', '#ffd700')
+    render.drawText(ctx, '已有 ' + playCount + ' 人挑战过，你能超过他们吗？', cx, H * 0.95, (W * 0.024) + 'px sans-serif', 'rgba(255,255,255,0.2)')
+  } else {
+    render.drawText(ctx, '据说没人能在紫禁之巅撑过10秒', cx, H * 0.92, (W * 0.026) + 'px sans-serif', 'rgba(255,255,255,0.2)')
   }
 }
 
-// ========== 第一局结束夸奖 ==========
-function getPraiseTexts(sc, taps, mc) {
-  var lines = []
-  if (sc >= 12) lines.push({ t: '🔥 太猛了！', c: '#ffd700', s: 0.09 })
-  else if (sc >= 8) lines.push({ t: '👏 手速不错！', c: '#ffd700', s: 0.09 })
-  else if (sc >= 4) lines.push({ t: '💪 还行嘛！', c: '#4ecdc4', s: 0.09 })
-  else lines.push({ t: '😅 热热身~', c: '#a29bfe', s: 0.09 })
-
-  lines.push({ t: taps + '次点击 · ' + sc + '分', c: 'rgba(255,255,255,0.7)', s: 0.04 })
-
-  if (mc >= 5) lines.push({ t: mc + '连击！你是节奏大师！', c: '#ff6b6b', s: 0.04 })
-  else if (mc >= 3) lines.push({ t: mc + '连击，有点东西！', c: '#4ecdc4', s: 0.035 })
-
-  // 挑衅下一局
-  lines.push({ t: '', c: '', s: 0 })
-  lines.push({ t: '热身结束，真正的挑战来了', c: 'rgba(255,255,255,0.5)', s: 0.033 })
-  lines.push({ t: '⏰ 接下来有时间限制啦！', c: '#ffd700', s: 0.038 })
-  lines.push({ t: '而且圆点会消失哦 😈', c: '#ff6b6b', s: 0.035 })
-  return lines
-}
-
-function getR2PraiseTexts(sc, taps, mc) {
-  var lines = []
-  if (sc >= 25) lines.push({ t: '🔥 强者！', c: '#ffd700', s: 0.09 })
-  else if (sc >= 15) lines.push({ t: '👏 可以啊！', c: '#ffd700', s: 0.09 })
-  else if (sc >= 8) lines.push({ t: '😏 就这？', c: '#4ecdc4', s: 0.09 })
-  else lines.push({ t: '😅 加油吧...', c: '#a29bfe', s: 0.09 })
-
-  lines.push({ t: taps + '次点击 · ' + sc + '分', c: 'rgba(255,255,255,0.7)', s: 0.04 })
-  if (mc >= 3) lines.push({ t: '最高' + mc + '连击', c: '#4ecdc4', s: 0.035 })
-
-  lines.push({ t: '', c: '', s: 0 })
-  lines.push({ t: '最终关卡 · 紫禁之巅', c: '#ff4646', s: 0.045 })
-  lines.push({ t: '⚡ 圆点会变得非常快！', c: '#ffd700', s: 0.038 })
-  lines.push({ t: '能撑住吗？😈', c: 'rgba(255,255,255,0.5)', s: 0.035 })
-  return lines
-}
-
-function drawPraise() {
-  render.drawBG(ctx, W, H, 'rgba(255,215,0,0.06)')
-  var cx = W / 2
-  var elapsed = (Date.now() - praiseStart) / 1000
-
-  for (var i = 0; i < praiseText.length; i++) {
-    var line = praiseText[i]
-    if (!line.t) continue
-    // 逐行淡入（每行延迟0.3秒）
-    var lineDelay = i * 0.3
-    var lineAlpha = Math.min(1, Math.max(0, (elapsed - lineDelay) * 3))
-    // 弹性缩放
-    var ls = 1
-    var la = elapsed - lineDelay
-    if (la > 0 && la < 0.2) ls = 0.5 + (la / 0.2) * 0.7
-    else if (la >= 0.2 && la < 0.35) ls = 1.2 - ((la - 0.2) / 0.15) * 0.2
-
-    ctx.globalAlpha = lineAlpha
-    ctx.save()
-    var ly = safeTop + H * 0.2 + i * H * 0.08
-    ctx.translate(cx, ly)
-    ctx.scale(ls, ls)
-    render.drawText(ctx, line.t, 0, 0, 'bold ' + (W * line.s) + 'px sans-serif', line.c)
-    ctx.restore()
-    ctx.globalAlpha = 1
-  }
-
-  // 底部"点击继续"闪烁
-  if (elapsed > 1.5) {
-    var autoTime = 3 - (elapsed - 1.5)
-    if (autoTime <= 0) {
-      // 3秒后自动进入下一局
-      beginRound(praiseScene)
-      return
-    }
-    ctx.globalAlpha = 0.3 + Math.sin(elapsed * 4) * 0.3
-    render.drawText(ctx, '点击继续 · ' + Math.ceil(autoTime) + '秒后自动开始', cx, H * 0.88, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.5)')
-    ctx.globalAlpha = 1
-  }
-}
-
-// ========== 局间过渡 ==========
+// ========== 局间过渡（战报+规则+倒计时） ==========
 function drawTransition() {
-  var tints = ['rgba(78,205,196,0.08)', 'rgba(102,126,234,0.08)', 'rgba(255,50,50,0.08)']
+  var tints = ['rgba(78,205,196,0.06)', 'rgba(102,126,234,0.06)', 'rgba(255,50,50,0.06)']
   render.drawBG(ctx, W, H, tints[roundIdx])
   var cx = W / 2
   var r = ROUNDS[roundIdx]
-  var elapsed = (Date.now() - transStart) / 1000 // 过渡已过时间（秒）
+  var elapsed = (Date.now() - transStart) / 1000
   var tagColors = ['#4ecdc4', '#667eea', '#ff4646']
   var tagColor = tagColors[roundIdx]
+  var ease = Math.min(elapsed / 0.25, 1)
+  ease = ease * (2 - ease)
+  var st = safeTop
+  var curY = st + 10
 
-  // 入场动画系数 (0→1)
-  var enterT = Math.min(elapsed / 0.3, 1)
-  var ease = enterT * (2 - enterT) // ease-out
-
-  // 上局成绩（非第一局时显示）
-  var tSafe = safeTop
+  // ============ 上半部：上局战报（非第一局） ============
   if (roundIdx > 0) {
-    var prevAlpha = Math.max(0, Math.min(1, elapsed * 3))
-    ctx.globalAlpha = prevAlpha * 0.6
-    render.drawText(ctx, '上局得分', cx, tSafe + H * 0.15, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.5)')
-    render.drawText(ctx, '' + roundScores[roundIdx - 1], cx, tSafe + H * 0.21, 'bold ' + (W * 0.07) + 'px sans-serif', '#ffd700')
+    var prevScore = roundScores[roundIdx - 1]
+    var prevTaps = roundTaps[roundIdx - 1]
+    var prevCombo = roundMaxCombo[roundIdx - 1]
+    var prevName = ROUNDS[roundIdx - 1].name
+    var prevColor = tagColors[roundIdx - 1]
+
+    // 战报卡片背景
+    var reportH = H * 0.22
+    ctx.globalAlpha = ease
+    ctx.fillStyle = 'rgba(255,255,255,0.03)'
+    render.roundRect(ctx, W * 0.06, curY, W * 0.88, reportH, 14)
+    ctx.fill()
+
+    // 上局名称
+    render.drawText(ctx, prevName + ' 完成！', cx, curY + reportH * 0.18, (W * 0.03) + 'px sans-serif', prevColor)
+
+    // 大分数
+    render.drawText(ctx, '' + prevScore, cx, curY + reportH * 0.48, 'bold ' + (W * 0.1) + 'px sans-serif', '#ffd700')
+
+    // 夸奖语
+    var praise = ''
+    if (roundIdx === 1) {
+      // 第一局结束的夸奖
+      if (prevScore >= 12) praise = '🔥 太猛了！热身就这么强'
+      else if (prevScore >= 8) praise = '👏 不错！准备好加速了吗'
+      else praise = '💪 热身完毕，真正的挑战开始'
+    } else {
+      // 第二局结束的夸奖
+      if (prevScore >= 30) praise = '🔥 强者！最终关你也能行'
+      else if (prevScore >= 18) praise = '👏 可以！但紫禁之巅更猛'
+      else praise = '😏 接下来才是地狱难度'
+    }
+    render.drawText(ctx, praise, cx, curY + reportH * 0.72, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.5)')
+
+    // 数据行
+    render.drawText(ctx, prevTaps + '次点击  ·  最高' + prevCombo + '连击', cx, curY + reportH * 0.9, (W * 0.025) + 'px sans-serif', 'rgba(255,255,255,0.3)')
+
     ctx.globalAlpha = 1
+    curY += reportH + 12
   }
 
-  // 局标签 — 滑入
-  ctx.save()
-  ctx.translate((1 - ease) * -80, 0)
-  ctx.globalAlpha = ease
-  render.drawText(ctx, '第 ' + (roundIdx + 1) + ' / 3 局', cx, H * 0.35, (W * 0.035) + 'px sans-serif', tagColor)
-  ctx.restore()
+  // ============ 分隔：箭头提示 ============
+  if (roundIdx > 0) {
+    render.drawText(ctx, '▼', cx, curY + 6, (W * 0.04) + 'px sans-serif', 'rgba(255,255,255,0.15)')
+    curY += 18
+  }
 
-  // 局名 — 缩放弹入
+  // ============ 下半部：下一局信息 ============
+  // 局序号
+  ctx.globalAlpha = ease
+  render.drawText(ctx, '— 第 ' + (roundIdx + 1) + ' / 3 局 —', cx, curY + 8, (W * 0.028) + 'px sans-serif', 'rgba(255,255,255,0.3)')
+  ctx.globalAlpha = 1
+  curY += 28
+
+  // 局名（大）
+  var nameSize = roundIdx === 2 ? W * 0.11 : W * 0.09
   var nameScale = ease < 1 ? 0.3 + ease * 0.7 : 1
-  var nameSize = roundIdx === 2 ? W * 0.1 : W * 0.09
   ctx.save()
-  ctx.translate(cx, H * 0.44)
+  ctx.translate(cx, curY + 16)
   ctx.scale(nameScale, nameScale)
   ctx.globalAlpha = ease
-  // 第三局局名发光
   if (roundIdx === 2) {
     ctx.shadowColor = '#ff4646'
-    ctx.shadowBlur = 15 + Math.sin(elapsed * 8) * 5
+    ctx.shadowBlur = 12 + Math.sin(elapsed * 6) * 5
   }
   render.drawText(ctx, r.name, 0, 0, 'bold ' + nameSize + 'px sans-serif', roundIdx === 2 ? '#ff4646' : '#fff')
   ctx.shadowBlur = 0
   ctx.restore()
+  curY += 44
 
-  // 副标题
-  ctx.globalAlpha = Math.min(1, Math.max(0, (elapsed - 0.15) * 4))
-  render.drawText(ctx, r.sub, cx, H * 0.50, (W * 0.04) + 'px sans-serif', 'rgba(255,255,255,0.4)')
-  ctx.globalAlpha = 1
-
-  // 难度提示 — 淡入
-  ctx.globalAlpha = Math.min(1, Math.max(0, (elapsed - 0.25) * 3))
-  render.drawText(ctx, r.diff, cx, H * 0.57, (W * 0.032) + 'px sans-serif', 'rgba(255,255,255,0.35)')
-  ctx.globalAlpha = 1
-
-  // 难度条（进度式）
-  var barW = W * 0.3
-  var barX = cx - barW / 2
-  var barY2 = H * 0.62
-  ctx.fillStyle = 'rgba(255,255,255,0.08)'
-  render.roundRect(ctx, barX, barY2, barW, 8, 4)
-  ctx.fill()
-  var fillW = barW * ((roundIdx + 1) / 3)
-  ctx.fillStyle = tagColor
-  render.roundRect(ctx, barX, barY2, fillW * ease, 8, 4)
-  ctx.fill()
-  // 难度文字
-  var diffLabels = ['简单', '中等', '极难']
-  render.drawText(ctx, diffLabels[roundIdx], cx, barY2 + 22, (W * 0.025) + 'px sans-serif', tagColor)
-
-  // 倒计时数字 — 脉冲放大
-  if (transCount > 0) {
-    var cdAge = elapsed % 0.5
-    var cdScale = 1 + Math.max(0, 0.5 - cdAge) * 1.5
-    ctx.save()
-    ctx.translate(cx, H * 0.75)
-    ctx.scale(cdScale, cdScale)
-    ctx.globalAlpha = Math.min(1, cdScale)
-
-    // 倒计时圆环
-    ctx.beginPath()
-    ctx.arc(0, 0, W * 0.08, 0, Math.PI * 2)
-    ctx.strokeStyle = tagColor
-    ctx.globalAlpha = 0.2
-    ctx.lineWidth = 3
-    ctx.stroke()
-    ctx.globalAlpha = 1
-
-    render.drawText(ctx, '' + transCount, 0, 0, 'bold ' + (W * 0.1) + 'px sans-serif', tagColor)
-    ctx.restore()
+  // 规则列表（紧凑）
+  var rules = []
+  if (roundIdx === 0) {
+    rules = [
+      { icon: '🎯', text: '点击表情圆点得分' },
+      { icon: '⚡', text: '越快分越高' },
+      { icon: '✅', text: '点满 3 个过关' }
+    ]
+  } else if (roundIdx === 1) {
+    rules = [
+      { icon: '⏱', text: '限时 ' + r.dur + ' 秒' },
+      { icon: '💨', text: '圆点会消失！' },
+      { icon: '🔥', text: '连击加成更高分' }
+    ]
+  } else {
+    rules = [
+      { icon: '⏱', text: '限时 ' + Math.min(r3BaseDur + shareCount, r3MaxDur) + ' 秒' },
+      { icon: '⚡', text: '0.38秒极速消失！' },
+      { icon: '🏆', text: '计入全国决战榜' }
+    ]
   }
 
-  // 底部提示
-  ctx.globalAlpha = 0.3
-  render.drawText(ctx, '准备好了吗？', cx, H * 0.88, (W * 0.03) + 'px sans-serif', 'rgba(255,255,255,0.4)')
+  ctx.globalAlpha = Math.min(1, Math.max(0, (elapsed - 0.1) * 4))
+  for (var ri = 0; ri < rules.length; ri++) {
+    var ry = curY + ri * (H * 0.055)
+    render.drawText(ctx, rules[ri].icon + ' ' + rules[ri].text, cx, ry + 10, (W * 0.034) + 'px sans-serif', 'rgba(255,255,255,0.6)')
+  }
   ctx.globalAlpha = 1
+  curY += rules.length * H * 0.055 + 10
+
+  // 难度条
+  var barW2 = W * 0.25
+  var barX2 = cx - barW2 / 2
+  ctx.fillStyle = 'rgba(255,255,255,0.06)'
+  render.roundRect(ctx, barX2, curY, barW2, 5, 3)
+  ctx.fill()
+  ctx.fillStyle = tagColor
+  render.roundRect(ctx, barX2, curY, barW2 * ((roundIdx + 1) / 3) * ease, 5, 3)
+  ctx.fill()
+  var diffLabels = ['简单', '中等', '极难']
+  render.drawText(ctx, diffLabels[roundIdx], cx, curY + 16, (W * 0.024) + 'px sans-serif', tagColor)
+
+  // ============ 底部倒计时 ============
+  if (transCount > 0) {
+    var cdFrac = (elapsed * 1000 % (r.cdSpeed || 500)) / (r.cdSpeed || 500)
+    var cdScale = 1 + Math.max(0, 0.3 - cdFrac * 0.3) * 2
+    ctx.save()
+    ctx.translate(cx, H * 0.88)
+    ctx.scale(cdScale, cdScale)
+    ctx.globalAlpha = 0.7 + (1 - cdFrac) * 0.3
+    render.drawText(ctx, '' + transCount, 0, 0, 'bold ' + (W * 0.1) + 'px sans-serif', tagColor)
+    ctx.restore()
+    ctx.globalAlpha = 1
+  } else {
+    render.drawText(ctx, 'GO!', cx, H * 0.88, 'bold ' + (W * 0.12) + 'px sans-serif', tagColor)
+  }
 }
 
 // ========== 游戏中 ==========
@@ -454,17 +422,30 @@ function drawPlay() {
     // 待机微微呼吸
     scale *= 1 + Math.sin(age / 300) * 0.05
 
+    // 即将消失时平滑淡出
+    var dotAlpha = 1
+    if (r.autoHide > 0) {
+      var hidePct = age / r.autoHide
+      if (hidePct > 0.6) {
+        // 后40%平滑淡出
+        dotAlpha = 1 - (hidePct - 0.6) / 0.4
+        // 缩小消失
+        scale *= 0.5 + dotAlpha * 0.5
+      }
+    }
+
     ctx.save()
     ctx.translate(dotX, dotY)
     ctx.scale(scale, scale)
+    ctx.globalAlpha = dotAlpha
 
     // 彩色光晕
     ctx.beginPath()
     ctx.arc(0, 0, DOT_R + 18, 0, Math.PI * 2)
-    ctx.globalAlpha = 0.15
+    ctx.globalAlpha = dotAlpha * 0.15
     ctx.fillStyle = dotColor
     ctx.fill()
-    ctx.globalAlpha = 1
+    ctx.globalAlpha = dotAlpha
 
     // 彩色底圆
     ctx.beginPath()
@@ -483,23 +464,11 @@ function drawPlay() {
     ctx.beginPath()
     ctx.arc(0, 0, DOT_R + ring * DOT_R * 1.2, 0, Math.PI * 2)
     ctx.strokeStyle = dotColor
-    ctx.globalAlpha = 0.3 * (1 - ring)
+    ctx.globalAlpha = dotAlpha * 0.3 * (1 - ring)
     ctx.lineWidth = 2
     ctx.stroke()
+
     ctx.globalAlpha = 1
-
-    // 第三局：消失倒计时环（显示剩余时间）
-    if (r.autoHide > 0) {
-      var hidePct = Math.min(1, age / r.autoHide)
-      ctx.beginPath()
-      ctx.arc(0, 0, DOT_R + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - hidePct))
-      ctx.strokeStyle = hidePct > 0.7 ? '#ff4646' : 'rgba(255,255,255,0.4)'
-      ctx.globalAlpha = 0.6
-      ctx.lineWidth = 3
-      ctx.stroke()
-      ctx.globalAlpha = 1
-    }
-
     ctx.restore()
   }
 
@@ -640,30 +609,14 @@ function drawResult() {
   var bestCombo = Math.max(roundMaxCombo[0], roundMaxCombo[1], roundMaxCombo[2])
   render.drawText(ctx, '总分 ' + total + '  ·  点击 ' + totalTaps + '次  ·  最高' + bestCombo + '连击', cx, rTop + H * 0.145, (W * 0.025) + 'px sans-serif', 'rgba(255,255,255,0.35)')
 
-  // === 中间：排行榜（主体） ===
+  // === 中间：紫禁之巅决战榜 ===
   var tabY = rTop + H * 0.17
-  var tabW = W * 0.4
-  var tabs = [
-    { idx: 1, name: '速点之王', color: '#667eea', sub: '⚡ 速点之王排行榜' },
-    { idx: 2, name: '紫禁之巅', color: '#ff4646', sub: '🏆 紫禁之巅决战榜' }
-  ]
-  for (var t = 0; t < tabs.length; t++) {
-    var tx = W * 0.06 + t * (tabW + 10)
-    ctx.fillStyle = tabs[t].idx === rankTab ? tabs[t].color : 'rgba(255,255,255,0.08)'
-    ctx.globalAlpha = tabs[t].idx === rankTab ? 0.25 : 1
-    render.roundRect(ctx, tx, tabY, tabW, 34, 12)
-    ctx.fill()
-    ctx.globalAlpha = 1
-    render.drawText(ctx, tabs[t].name, tx + tabW / 2, tabY + 17, 'bold ' + (W * 0.032) + 'px sans-serif', tabs[t].idx === rankTab ? tabs[t].color : 'rgba(255,255,255,0.35)')
-  }
-
-  var subTitle = rankTab === 2 ? '🏆 紫禁之巅决战榜' : '⚡ 速点之王排行榜'
-  render.drawText(ctx, subTitle, cx, tabY + 54, 'bold ' + (W * 0.032) + 'px sans-serif', 'rgba(255,255,255,0.45)')
+  render.drawText(ctx, '🏆 紫禁之巅决战榜', cx, tabY + 10, 'bold ' + (W * 0.038) + 'px sans-serif', '#ff4646')
 
   // 排行榜列表
-  var listY = tabY + 68
+  var listY = tabY + 30
   var rowH = 52
-  var btnAreaH = needAd ? H * 0.22 : H * 0.15  // 底部按钮区预留高度
+  var btnAreaH = needShareUI ? H * 0.18 : H * 0.12  // 底部按钮区预留高度
   if (rankLoading) {
     render.drawText(ctx, '加载中...', cx, listY + 40, (W * 0.04) + 'px sans-serif', 'rgba(255,255,255,0.3)')
   } else if (rankList.length === 0) {
@@ -690,10 +643,10 @@ function drawResult() {
   var bw = W * 0.5, bh = W * 0.085
   var bx = cx - bw / 2
 
-  if (needAd) {
-    var btnY = H - bh * 3 - 36
-    render.drawButton(ctx, bx, btnY, bw, bh, '🎬 看视频 继续挑战', ['#667eea', '#764ba2'])
-    render.drawButton(ctx, bx, btnY + bh + 8, bw, bh, '📤 分享好友 免广告', ['#00b894', '#00cec9'])
+  if (needShareUI) {
+    var btnY = H - bh * 2 - 30
+    render.drawText(ctx, '分享好友即可继续挑战', cx, btnY - 14, (W * 0.026) + 'px sans-serif', 'rgba(255,255,255,0.4)')
+    render.drawButton(ctx, bx, btnY, bw, bh, '📤 分享好友 再来一局', ['#00b894', '#00cec9'])
     render.drawText(ctx, '返回首页', cx, H - 18, (W * 0.028) + 'px sans-serif', 'rgba(255,255,255,0.25)')
   } else {
     var btnY = H - bh - 36
@@ -707,10 +660,14 @@ function goHome() { scene = 'home' }
 
 function startGame() {
   if (!nickname) {
-    // 没昵称，弹键盘输入
     askNickname(function () {
-      if (nickname) beginRound(0)
+      if (nickname) startGame()
     })
+    return
+  }
+  // 超过免费次数，必须分享
+  if (playCount >= 1) {
+    shareGame()
     return
   }
   beginRound(0)
@@ -719,7 +676,12 @@ function startGame() {
 function beginRound(idx) {
   roundIdx = idx
   score = 0; combo = 0; tapCount = 0; maxCombo = 0; floats = []; ripples = []; particles = []; screenShake = 0
-  timeLeft = ROUNDS[idx].dur
+  // 第三局时长 = 基础10秒 + 分享次数（上限30秒）
+  if (idx === 2) {
+    timeLeft = Math.min(r3BaseDur + shareCount, r3MaxDur)
+  } else {
+    timeLeft = ROUNDS[idx].dur
+  }
   dotVisible = false
   lastTapTime = 0
   scene = 'transition'
@@ -760,21 +722,7 @@ function endRound(idx) {
   roundMaxCombo[idx] = maxCombo
   var next = idx + 1
   if (next < ROUNDS.length) {
-    if (idx === 0) {
-      // 第一局结束：夸奖
-      praiseText = getPraiseTexts(score, tapCount, maxCombo)
-      praiseStart = Date.now()
-      scene = 'praise'
-      praiseScene = next
-    } else if (idx === 1) {
-      // 第二局结束：警告紫禁之巅
-      praiseText = getR2PraiseTexts(score, tapCount, maxCombo)
-      praiseStart = Date.now()
-      scene = 'praise'
-      praiseScene = next
-    } else {
-      setTimeout(function () { beginRound(next) }, 600)
-    }
+    setTimeout(function () { beginRound(next) }, 600)
   } else {
     audio.stopBGM()
     finishGame()
@@ -901,9 +849,10 @@ function tapDot(tx, ty) {
 
 function finishGame() {
   playCount++
-  needAd = !adFreed
+  // 只有第1把免费，之后必须分享才能继续
+  needShareUI = playCount >= 1
   scene = 'result'
-  rankTab = 2
+  rankTab = 3
   loadRanking(rankTab)
   submitScores()
 
@@ -966,30 +915,12 @@ wx.onTouchStart(function (e) {
     }
     // 排行榜
     if (render.hitTest(tx, ty, bx, H * 0.66, bw, bh * 0.9)) {
-      scene = 'result'; needAd = false; rankTab = 2
+      scene = 'result'; needShareUI = false; rankTab = 3
       loadRanking(2); return
-    }
-  } else if (scene === 'praise') {
-    // 至少1.5秒后才能点击跳过
-    if ((Date.now() - praiseStart) > 1500) {
-      beginRound(praiseScene)
     }
   } else if (scene === 'play') {
     tapDot(tx, ty)
   } else if (scene === 'result') {
-    // Tab 切换（只有2个：速点之王=1, 紫禁之巅=2）
-    var rTop2 = safeTop + 10
-    var tabY2 = rTop2 + H * 0.17
-    var tabW2 = W * 0.4
-    var tabIdxs = [1, 2]
-    for (var t = 0; t < 2; t++) {
-      var tabX = W * 0.06 + t * (tabW2 + 10)
-      if (render.hitTest(tx, ty, tabX, tabY2, tabW2, 34)) {
-        if (tabIdxs[t] !== rankTab) { rankTab = tabIdxs[t]; loadRanking(rankTab) }
-        return
-      }
-    }
-
     // 底部按钮区域
     var bw2 = W * 0.5, bh2 = W * 0.085
     var bx2 = cx - bw2 / 2
@@ -999,57 +930,34 @@ wx.onTouchStart(function (e) {
       goHome(); return
     }
 
-    if (needAd) {
-      var btnY2 = H - bh2 * 3 - 36
+    if (needShareUI) {
+      var btnY2 = H - bh2 * 2 - 30
       if (render.hitTest(tx, ty, bx2, btnY2, bw2, bh2)) {
-        watchAd(); return
-      }
-      if (render.hitTest(tx, ty, bx2, btnY2 + bh2 + 8, bw2, bh2)) {
         shareGame(); return
       }
     } else {
       var btnY2 = H - bh2 - 36
       if (render.hitTest(tx, ty, bx2, btnY2, bw2, bh2)) {
-        adFreed = false; beginRound(0); return
+        startGame(); return
       }
     }
   }
 })
-
-// ========== 广告 ==========
-function watchAd() {
-  if (!wx.createRewardedVideoAd) { playCount = 0; needAd = false; return }
-  try {
-    if (!videoAd) {
-      videoAd = wx.createRewardedVideoAd({ adUnitId: AD_UNIT_ID })
-      videoAd.onClose(function (res) {
-        if (res && res.isEnded) {
-          playCount = 0; adFreed = false; needAd = false
-          wx.showToast({ title: '感谢观看', icon: 'success' })
-        } else {
-          wx.showToast({ title: '需看完广告哦', icon: 'none' })
-        }
-      })
-    }
-    videoAd.show().catch(function () {
-      videoAd.load().then(function () { videoAd.show() }).catch(function () {
-        wx.showToast({ title: '广告加载失败', icon: 'none' })
-        playCount = 0; needAd = false
-      })
-    })
-  } catch (e) { playCount = 0; needAd = false }
-}
 
 // ========== 分享 ==========
 function shareGame() {
   wx.shareAppMessage({
     title: '点呀~点·紫禁之巅我拿了' + roundScores[2] + '分！你敢来战吗？',
     success: function () {
-      adFreed = true; playCount = 0; needAd = false
+      shareCount++
+      needShareUI = false
       wx.showModal({
         title: '分享成功',
-        content: '分享成功，已免广告一次，继续挑战！',
-        showCancel: false
+        content: '分享成功，再来一局！',
+        showCancel: false,
+        success: function () {
+          beginRound(0)
+        }
       })
     }
   })
