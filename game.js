@@ -82,6 +82,7 @@ if (!nickname) {
 }
 var playCount = 0
 var shareCount = 0  // 累计分享次数
+var waitingShareReturn = false  // 分享后等待返回
 var r3BaseDur = 10  // 第三局基础时长
 var r3MaxDur = 30   // 第三局最大时长
 
@@ -946,22 +947,27 @@ wx.onTouchStart(function (e) {
 
 // ========== 分享 ==========
 function shareGame() {
+  waitingShareReturn = true
   wx.shareAppMessage({
-    title: '点呀~点·紫禁之巅我拿了' + roundScores[2] + '分！你敢来战吗？',
-    success: function () {
-      shareCount++
-      needShareUI = false
-      wx.showModal({
-        title: '分享成功',
-        content: '分享成功，再来一局！',
-        showCancel: false,
-        success: function () {
-          beginRound(0)
-        }
-      })
-    }
+    title: '点呀~点·紫禁之巅我拿了' + roundScores[2] + '分！你敢来战吗？'
   })
 }
+
+wx.onShow(function () {
+  if (waitingShareReturn) {
+    waitingShareReturn = false
+    shareCount++
+    needShareUI = false
+    wx.showModal({
+      title: '分享成功',
+      content: '分享成功，再来一局！',
+      showCancel: false,
+      success: function () {
+        beginRound(0)
+      }
+    })
+  }
+})
 
 wx.onShareAppMessage(function () {
   return {
