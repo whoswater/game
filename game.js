@@ -160,7 +160,7 @@ function drawHome() {
   ctx.stroke()
 
   // 游戏名
-  render.drawText(ctx, '点呀~点', cx, st + H * 0.19, 'bold ' + (W * 0.1) + 'px sans-serif', '#fff')
+  render.drawText(ctx, '滴注点', cx, st + H * 0.19, 'bold ' + (W * 0.1) + 'px sans-serif', '#fff')
 
   // 文案
   render.drawText(ctx, '手指够快吗？', cx, st + H * 0.26, 'bold ' + (W * 0.055) + 'px sans-serif', 'rgba(255,255,255,0.7)')
@@ -917,7 +917,7 @@ wx.onTouchStart(function (e) {
     // 排行榜
     if (render.hitTest(tx, ty, bx, H * 0.66, bw, bh * 0.9)) {
       scene = 'result'; needShareUI = false; rankTab = 3
-      loadRanking(2); return
+      loadRanking(rankTab); return
     }
   } else if (scene === 'play') {
     tapDot(tx, ty)
@@ -949,7 +949,7 @@ wx.onTouchStart(function (e) {
 function shareGame() {
   waitingShareReturn = true
   wx.shareAppMessage({
-    title: '点呀~点·紫禁之巅我拿了' + roundScores[2] + '分！你敢来战吗？'
+    title: '滴注点·紫禁之巅我拿了' + roundScores[2] + '分！你敢来战吗？'
   })
 }
 
@@ -971,7 +971,7 @@ wx.onShow(function () {
 
 wx.onShareAppMessage(function () {
   return {
-    title: '点呀~点！紫禁之巅等你来战！',
+    title: '滴注点！紫禁之巅等你来战！',
     query: ''
   }
 })
