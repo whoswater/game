@@ -62,11 +62,34 @@ function askNickname(callback) {
     var name = (res.value || '').trim()
     if (name) {
       nickname = name.substring(0, 8)
-      wx.setStorageSync('nickname', nickname)
-      _needNickname = false
+      // 客户端内容安全检测
+      wx.cloud.callFunction({
+        name: 'checkText',
+        data: { text: nickname },
+        success: function (checkRes) {
+          if (checkRes.result && checkRes.result.safe === false) {
+            wx.showToast({ title: '昵称含违规内容，请重新输入', icon: 'none' })
+            nickname = ''
+            _needNickname = true
+          } else {
+            wx.setStorageSync('nickname', nickname)
+            _needNickname = false
+          }
+          wx.hideKeyboard()
+          if (callback) callback()
+        },
+        fail: function () {
+          // 检测失败时放行
+          wx.setStorageSync('nickname', nickname)
+          _needNickname = false
+          wx.hideKeyboard()
+          if (callback) callback()
+        }
+      })
+    } else {
+      wx.hideKeyboard()
+      if (callback) callback()
     }
-    wx.hideKeyboard()
-    if (callback) callback()
   })
 
   wx.onKeyboardComplete(function () {
@@ -875,7 +898,20 @@ function submitScores() {
       (function (s, r) {
         wx.cloud.callFunction({
           name: 'updateScore',
-          data: { score: s, nickname: nickname, round: r }
+          data: { score: s, nickname: nickname, round: r },
+          success: function (res) {
+            if (res.result && res.result.code === -2) {
+              // 昵称违规，重置昵称
+              nickname = '匿名玩家'
+              wx.setStorageSync('nickname', nickname)
+              wx.showToast({ title: '昵称含违规内容，已重置', icon: 'none' })
+              // 用安全昵称重新提交
+              wx.cloud.callFunction({
+                name: 'updateScore',
+                data: { score: s, nickname: nickname, round: r }
+              })
+            }
+          }
         })
       })(roundScores[i], i + 1)
     } catch (e) { }

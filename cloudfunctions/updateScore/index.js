@@ -4,6 +4,28 @@ const db = cloud.database()
 
 const MAX_SCORE = 150
 
+// 内容安全检测：使用微信 msgSecCheck 接口
+async function checkText(text, openid) {
+  if (!text) return true
+  try {
+    const res = await cloud.openapi.security.msgSecCheck({
+      content: text,
+      version: 2,
+      scene: 1,
+      openid: openid
+    })
+    // result.suggest: "pass" / "review" / "risky"
+    if (res.result && res.result.suggest !== 'pass') {
+      return false
+    }
+    return true
+  } catch (err) {
+    console.error('msgSecCheck error:', err)
+    // 接口异常时放行，避免影响正常使用
+    return true
+  }
+}
+
 exports.main = async (event, context) => {
   const wxContext = cloud.getWXContext()
   const openid = wxContext.OPENID
@@ -15,6 +37,12 @@ exports.main = async (event, context) => {
   }
   if (![1, 2, 3].includes(round)) {
     return { code: -1, msg: '非法局数' }
+  }
+
+  // 昵称内容安全检测
+  const nickSafe = await checkText(nickname, openid)
+  if (!nickSafe) {
+    return { code: -2, msg: '昵称含违规内容，请修改' }
   }
 
   try {
